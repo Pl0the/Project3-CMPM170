@@ -665,7 +665,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::oxygenmeter
   maxOxygen: 30
-  drainPerSecond: 1
+  drainPerSecond: 2
   oxygenBar: {fileID: 1710509918}
   onOxygenDepleted:
     m_PersistentCalls:
