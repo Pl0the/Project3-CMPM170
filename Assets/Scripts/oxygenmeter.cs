@@ -37,6 +37,8 @@ public class oxygenmeter : MonoBehaviour
     {
         if (IsEmpty) return;
 
+        drainPerSecond += 0.2f * Time.deltaTime;
+
         Current = Mathf.Max(0f, Current - drainPerSecond * Time.deltaTime);
         UpdateBar();
 
