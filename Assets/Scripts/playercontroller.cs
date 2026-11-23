@@ -3,51 +3,162 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 #endif
 
-//needs rb
 [RequireComponent(typeof(Rigidbody2D))]
 public class playercontroller : MonoBehaviour
 {
+    [Header("Movement")]
     [SerializeField] private float moveSpeed = 5f;
- 
-    [HideInInspector] public bool canMove = true; //oxy flips so player "dies
- 
+
+    [Header("Gravity")]
+    [SerializeField] private float gravityStrength = 30f;
+    [SerializeField] private float maxFallSpeed = 15f;
+    [SerializeField] private Vector2 startGravity = Vector2.down;
+    [Tooltip("Turn the player so their feet point toward gravity.")]
+    [SerializeField] private bool rotateToGravity = true;
+
+    [Header("Jump")]
+    [SerializeField] private float jumpSpeed = 11f;
+    [Tooltip("Let go of jump early for a shorter hop (upward speed gets multiplied by this).")]
+    [Range(0f, 1f)]
+    [SerializeField] private float jumpCutMultiplier = 0.5f;
+    [Tooltip("Can still jump this many seconds after walking off a ledge.")]
+    [SerializeField] private float coyoteTime = 0.1f;
+    [Tooltip("Pressing jump this many seconds before landing still counts.")]
+    [SerializeField] private float jumpBufferTime = 0.1f;
+    [SerializeField] private float groundCheckDistance = 0.05f;
+
+    [HideInInspector] public bool canMove = true;
+
+    public Vector2 GravityDir { get; private set; }
+    public bool IsGrounded { get; private set; }
+
     private Rigidbody2D rb;
-    private Vector2 input;
- 
+    private Collider2D col;
+    private float moveInput;
+    private bool jumpHeld;
+    private bool jumpCutRequested;
+    private bool prevJumpHeld;
+    private float lastGroundedTime = -999f;
+    private float lastJumpPressTime = -999f;
+
+    private readonly RaycastHit2D[] groundHits = new RaycastHit2D[4];
+    private ContactFilter2D groundFilter;
+
     private void Awake()
     {
         rb = GetComponent<Rigidbody2D>();
-        rb.gravityScale = 0f;                 //top down: no falling
-        rb.freezeRotation = true;             //no spin on bump
-        rb.collisionDetectionMode = CollisionDetectionMode2D.Continuous; //no tunneling
+        col = GetComponent<Collider2D>();
+
+        rb.gravityScale = 0f;
+        rb.freezeRotation = true;
+        rb.collisionDetectionMode = CollisionDetectionMode2D.Continuous;
         rb.interpolation = RigidbodyInterpolation2D.Interpolate;
+
+        groundFilter = new ContactFilter2D { useTriggers = false };
+
+        SetGravity(startGravity);
     }
- 
+
+    public void SetGravity(Vector2 dir)
+    {
+        if (dir == Vector2.zero) return;
+        GravityDir = Mathf.Abs(dir.x) > Mathf.Abs(dir.y)
+            ? new Vector2(Mathf.Sign(dir.x), 0f)
+            : new Vector2(0f, Mathf.Sign(dir.y));
+
+        if (rotateToGravity)
+        {
+            float angle = Mathf.Atan2(GravityDir.y, GravityDir.x) * Mathf.Rad2Deg + 90f;
+            rb.rotation = angle;
+            transform.rotation = Quaternion.Euler(0f, 0f, angle);
+        }
+    }
+
+    public void FlipGravity() => SetGravity(-GravityDir);
+
     private void Update()
     {
-        float x = 0f, y = 0f;
- 
+        bool left = false, right = false, up = false, down = false;
+        bool jumpDown = false;
+        jumpHeld = false;
+
 #if ENABLE_INPUT_SYSTEM
         var kb = Keyboard.current;
         if (kb != null)
         {
-            if (kb.aKey.isPressed || kb.leftArrowKey.isPressed)  x -= 1f;
-            if (kb.dKey.isPressed || kb.rightArrowKey.isPressed) x += 1f;
-            if (kb.sKey.isPressed || kb.downArrowKey.isPressed)  y -= 1f;
-            if (kb.wKey.isPressed || kb.upArrowKey.isPressed)    y += 1f;
+            left  = kb.aKey.isPressed || kb.leftArrowKey.isPressed;
+            right = kb.dKey.isPressed || kb.rightArrowKey.isPressed;
+            down  = kb.sKey.isPressed || kb.downArrowKey.isPressed;
+            up    = kb.wKey.isPressed || kb.upArrowKey.isPressed;
+            jumpHeld = kb.spaceKey.isPressed;
+            jumpDown = kb.spaceKey.wasPressedThisFrame;
+
+            var awayKey = AwayFromGravityKeys(kb);
+            jumpHeld |= awayKey.held;
+            jumpDown |= awayKey.pressed;
         }
 #else
-        x = Input.GetAxisRaw("Horizontal");
-        y = Input.GetAxisRaw("Vertical");
+        float h = Input.GetAxisRaw("Horizontal");
+        float v = Input.GetAxisRaw("Vertical");
+        left = h < 0f; right = h > 0f; down = v < 0f; up = v > 0f;
+        jumpHeld = Input.GetButton("Jump");
+        jumpDown = Input.GetButtonDown("Jump");
 #endif
- 
-        //normalize input vector
-        input = new Vector2(x, y).normalized;
+
+        if (GravityDir.y != 0f) moveInput = (right ? 1f : 0f) - (left ? 1f : 0f);
+        else                    moveInput = (up ? 1f : 0f) - (down ? 1f : 0f);
+
+        if (!canMove) { moveInput = 0f; jumpHeld = false; jumpDown = false; }
+
+        if (jumpDown) lastJumpPressTime = Time.time;
+        if (prevJumpHeld && !jumpHeld) jumpCutRequested = true; //let go of jump
+        prevJumpHeld = jumpHeld;
     }
- 
+
+#if ENABLE_INPUT_SYSTEM
+    private (bool held, bool pressed) AwayFromGravityKeys(Keyboard kb)
+    {
+        if (GravityDir == Vector2.down)  return (kb.wKey.isPressed || kb.upArrowKey.isPressed,    kb.wKey.wasPressedThisFrame || kb.upArrowKey.wasPressedThisFrame);
+        if (GravityDir == Vector2.up)    return (kb.sKey.isPressed || kb.downArrowKey.isPressed,  kb.sKey.wasPressedThisFrame || kb.downArrowKey.wasPressedThisFrame);
+        if (GravityDir == Vector2.left)  return (kb.dKey.isPressed || kb.rightArrowKey.isPressed, kb.dKey.wasPressedThisFrame || kb.rightArrowKey.wasPressedThisFrame);
+        return                                  (kb.aKey.isPressed || kb.leftArrowKey.isPressed,  kb.aKey.wasPressedThisFrame || kb.leftArrowKey.wasPressedThisFrame);
+    }
+#endif
+
     private void FixedUpdate()
     {
-        if (!canMove) input = Vector2.zero;
-        rb.linearVelocity = input * moveSpeed;
+        Vector2 g = GravityDir;
+        Vector2 side = g.y != 0f ? Vector2.right : Vector2.up;
+
+        IsGrounded = col != null && col.Cast(g, groundFilter, groundHits, groundCheckDistance) > 0;
+        if (IsGrounded) lastGroundedTime = Time.time;
+
+        float fall = Vector2.Dot(rb.linearVelocity, g);
+
+        fall = Mathf.Min(fall + gravityStrength * Time.fixedDeltaTime, maxFallSpeed);
+
+        bool canJump = Time.time - lastGroundedTime <= coyoteTime;
+        bool wantsJump = Time.time - lastJumpPressTime <= jumpBufferTime;
+        if (canJump && wantsJump)
+        {
+            fall = -jumpSpeed;
+            lastJumpPressTime = -999f;
+            lastGroundedTime = -999f;
+        }
+
+        if (jumpCutRequested)
+        {
+            if (fall < 0f) fall *= jumpCutMultiplier;
+            jumpCutRequested = false;
+        }
+
+        rb.linearVelocity = g * fall + side * (moveInput * moveSpeed);
+    }
+
+    private void OnDrawGizmos()
+    {
+        if (!Application.isPlaying) return;
+        Gizmos.color = IsGrounded ? Color.green : Color.yellow;
+        Gizmos.DrawLine(transform.position, (Vector2)transform.position + GravityDir);
     }
 }
