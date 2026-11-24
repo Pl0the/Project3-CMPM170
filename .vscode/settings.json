@@ -67,5 +67,5 @@
         "*.sln": "*.csproj",
         "*.slnx": "*.csproj"
     },
-    "dotnet.defaultSolution": "Project3-CMPM170.slnx"
+    "dotnet.defaultSolution": "Project3.slnx"
 }

@@ -9,6 +9,7 @@ public class oxygenmeter : MonoBehaviour
     [SerializeField] private float maxOxygen = 30f;       //30 = 30 seconds of air when full
     [SerializeField] private float drainPerSecond = 1f;
     [SerializeField] private Slider oxygenBar;            //UI Slider here
+    [SerializeField] private Vector3 oxygenOffset = new Vector3(0f, 0.8f, 0f);
 
     [Tooltip("Hook up a game-over screen, sound, etc. here.")]
     public UnityEvent onOxygenDepleted;
@@ -60,5 +61,16 @@ public class oxygenmeter : MonoBehaviour
     private void UpdateBar()
     {
         if (oxygenBar != null) oxygenBar.value = Current;
+    }
+
+        private void LateUpdate()
+    {
+        if (oxygenBar != null && Camera.main != null)
+        {
+            oxygenBar.transform.position =
+                Camera.main.WorldToScreenPoint(
+                    transform.position + oxygenOffset
+                );
+        }
     }
 }
